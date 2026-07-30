@@ -1,0 +1,1050 @@
+--[[
+    CheatHub Classroom v4.3 → WindUI 移植版
+    原功能完全保留，UI 改为 WindUI
+    快捷键: RightShift 显隐窗口, F8 单次搜答, F9 全自动开关
+]]
+
+-- 1. 加载 WindUI
+local WindUI = loadstring(game:GetService("HttpGet"):GetAsync("https://pastefy.app/5ILeJWeu/raw"))()
+
+-- 2. 渐变文字工具函数（原版保留）
+function gradient(text, startColor, endColor)
+    local result = ""
+    local chars = {}
+    for uchar in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        table.insert(chars, uchar)
+    end
+    local length = #chars
+    for i = 1, length do
+        local t = (i - 1) / math.max(length - 1, 1)
+        local r = startColor.R + (endColor.R - startColor.R) * t
+        local g = startColor.G + (endColor.G - startColor.G) * t
+        local b = startColor.B + (endColor.B - startColor.B) * t
+        result = result .. string.format('<font color="rgb(%d,%d,%d)">%s</font>',
+            math.floor(r * 255),
+            math.floor(g * 255),
+            math.floor(b * 255),
+            chars[i])
+    end
+    return result
+end
+
+-- 3. 原脚本所有功能模块（无 GUI 部分）
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+local CoreGui           = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui")
+
+local Config = {
+    AntiCaught     = true,
+    InstantSearch  = true,
+    AutoAnswer     = true,
+    SpoofState     = true,
+    SpoofProgress  = true,
+    SpoofView      = false,
+    BlockSearching = false,
+    CleanInject    = true,
+    UpvalueHack    = true,
+    AutoAdSkip     = true,
+    FullAuto       = false,
+    AutoDelay      = 0.3,
+    LogLevel       = 1,
+    InjectInterval = 0.15,
+}
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local R = {}
+for _, name in ipairs({
+    "ClassroomPlayerStateUpdate", "ClassroomProgressUpdate",
+    "ClassroomViewState", "ClassroomLookUpdate",
+    "ForceCaughtCamera", "ClassroomItemRemote", "ClassroomAdSlot",
+}) do
+    R[name] = Remotes:WaitForChild(name, 15)
+end
+
+local R_State    = R.ClassroomPlayerStateUpdate
+local R_Progress = R.ClassroomProgressUpdate
+local R_View     = R.ClassroomViewState
+local R_Look     = R.ClassroomLookUpdate
+local R_Caught   = R.ForceCaughtCamera
+local R_Item     = R.ClassroomItemRemote
+local R_Ad       = R.ClassroomAdSlot
+
+local hasGetupvalues = type(getupvalues) == "function"
+local hasSetupvalue   = type(setupvalue) == "function"
+local hasGetconns     = type(getconnections) == "function"
+local hasHookfunc     = type(hookfunction) == "function"
+local hasHookmeta     = type(hookmetamethod) == "function"
+
+local Internal, Internals
+
+local Diag = {
+    hookmeta    = false,
+    hookfunc    = false,
+    getconns    = false,
+    getupvalues = false,
+    setupvalue  = false,
+    namecallBlock = false,
+    cleanInject = false,
+    upvalueHack = false,
+    attrReset   = false,
+    connDisable = false,
+    setViewHook = false,
+}
+
+local logQueue = {}
+local notifyQueue = {}
+
+local function log(lv, msg, ...)
+    if Config.LogLevel >= lv then
+        local entry = string.format("[%s] %s", lv >= 2 and "DBG" or "INF", tostring(msg))
+        local args = {...}
+        for i = 1, #args do entry = entry .. " " .. tostring(args[i]) end
+        table.insert(logQueue, {text = entry, level = lv, time = os.clock()})
+        if #logQueue > 200 then table.remove(logQueue, 1) end
+        print("[CheatHub]", msg, ...)
+    end
+end
+
+local function notify(msg, color)
+    table.insert(notifyQueue, {text = msg, color = color or "accent", time = os.clock()})
+    if #notifyQueue > 5 then table.remove(notifyQueue, 1) end
+end
+
+local HookManager = {
+    namecallHandlers = {},
+    indexHandlers    = {},
+    installed        = false,
+    BLOCK = {},
+}
+
+function HookManager.registerNamecall(fn)
+    table.insert(HookManager.namecallHandlers, fn)
+    HookManager.install()
+end
+
+function HookManager.registerIndex(fn)
+    table.insert(HookManager.indexHandlers, fn)
+    HookManager.install()
+end
+
+function HookManager.install()
+    if HookManager.installed or not hasHookmeta then return end
+    HookManager.installed = true
+    Diag.hookmeta = true
+
+    pcall(function()
+        local old
+        old = hookmetamethod(game, "__namecall", function(...)
+            local self = ...
+            local method = getnamecallmethod()
+            local args = table.pack(...)
+            for _, handler in ipairs(HookManager.namecallHandlers) do
+                local result = handler(self, method, args)
+                if result ~= nil then
+                    if result == HookManager.BLOCK then return end
+                    return result
+                end
+            end
+            return old(table.unpack(args, 1, args.n))
+        end)
+    end)
+
+    pcall(function()
+        local old
+        old = hookmetamethod(game, "__index", function(self, key)
+            for _, handler in ipairs(HookManager.indexHandlers) do
+                local result = handler(self, key)
+                if result ~= nil then return result end
+            end
+            return old(self, key)
+        end)
+    end)
+
+    log(1, "HookManager: hookmetamethod 已安装")
+end
+
+local RemoteGuard = {}
+local guardActive = false
+local spoofStats = { state = 0, look = 0, view = 0, progress = 0, blocked = 0 }
+
+function RemoteGuard.enable()
+    if guardActive then return end
+    guardActive = true
+
+    HookManager.registerNamecall(function(self, method, args)
+        if not guardActive or method ~= "FireServer" then return nil end
+
+        if Config.SpoofState and rawequal(self, R_State) then
+            local state = args[2]
+            if state == "SEARCHING" or state == "WRITING" then
+                local curView = Internal and Internal.getCurrentView and Internal.getCurrentView() or nil
+                if curView == "CHEAT" or curView == "EXAM" then
+                elseif Config.BlockSearching then
+                    spoofStats.state = spoofStats.state + 1
+                    spoofStats.blocked = spoofStats.blocked + 1
+                    log(2, "BLOCK StateUpdate:", state)
+                    return HookManager.BLOCK
+                else
+                    spoofStats.state = spoofStats.state + 1
+                    args[2] = "IDLE"
+                    log(2, "MODIFY StateUpdate:", state, "-> IDLE")
+                end
+            end
+        end
+
+        if Config.SpoofView and rawequal(self, R_Look) then
+            if args[2] and args[2] ~= "FREE" then
+                spoofStats.look = spoofStats.look + 1
+                args[2] = "FREE"
+            end
+        end
+
+        if Config.SpoofView and rawequal(self, R_View) then
+            if args[2] and args[2] ~= "FREE" then
+                spoofStats.view = spoofStats.view + 1
+                args[2] = "FREE"
+            end
+        end
+
+        if Config.SpoofProgress and rawequal(self, R_Progress) then
+            local data = args[2]
+            if type(data) == "table" then
+                spoofStats.progress = spoofStats.progress + 1
+                data.cheatSeconds = 0
+                data.examSeconds = 0
+                log(2, "ProgressUpdate 已篡改 (仅清零cheat/examSeconds)")
+            end
+        end
+
+        return nil
+    end)
+
+    Diag.namecallBlock = true
+    log(1, "RemoteGuard 已启用 (namecall BLOCK+MODIFY 模式)")
+end
+
+function RemoteGuard.disable()
+    guardActive = false
+    log(1, "RemoteGuard 已关闭")
+end
+
+function RemoteGuard.getStats()
+    return spoofStats
+end
+
+local CleanInjector = {}
+local injectActive = false
+local injectCount = 0
+
+function CleanInjector.enable()
+    if injectActive then return end
+    injectActive = true
+    Diag.cleanInject = true
+
+    task.spawn(function()
+        while injectActive do
+            if Internal and Internal.isInRound and Internal.isInRound() then
+                local goal = Internal.getGoalAnswers and Internal.getGoalAnswers() or 10
+                local written = Internal.getAnswersWritten and Internal.getAnswersWritten() or 0
+                local searched = 0
+                local currentView = Internal.getCurrentView and Internal.getCurrentView() or "FREE"
+                if Internals.submitExamChoice and hasGetupvalues then
+                    local ok, ups = pcall(getupvalues, Internals.submitExamChoice)
+                    if ok and ups and type(ups[12]) == "number" then
+                        searched = ups[12]
+                    end
+                end
+
+                if currentView == "CHEAT" or currentView == "EXAM" then
+                else
+                    local cleanData = {
+                        answersWritten   = written,
+                        searchedAnswers  = searched,
+                        goalAnswers      = goal,
+                        hasSearchedAnswer = false,
+                        searchProgress   = 0,
+                        examSeconds      = 0,
+                        cheatSeconds     = 0,
+                        view             = currentView or "FREE",
+                        action           = "IDLE",
+                        passed           = goal <= written,
+                    }
+
+                    pcall(function()
+                        R_Progress:FireServer(cleanData)
+                    end)
+                    injectCount = injectCount + 1
+                end
+            end
+            task.wait(Config.InjectInterval)
+        end
+    end)
+
+    log(1, string.format("CleanInjector 已启用 (间隔: %.2fs)", Config.InjectInterval))
+    notify("定时器注入已启用", "green")
+end
+
+function CleanInjector.disable()
+    injectActive = false
+    log(1, "CleanInjector 已关闭")
+end
+
+function CleanInjector.getStats()
+    return { count = injectCount, active = injectActive }
+end
+
+local AntiCaught = {}
+local antiCaughtActive = false
+local fakeSignal = Instance.new("BindableEvent")
+
+local blockedAttrs = {
+    ["TeacherCaughtCameraActive"]      = true,
+    ["TeacherObservationCameraActive"] = true,
+}
+
+function AntiCaught.enable()
+    if antiCaughtActive then return end
+    antiCaughtActive = true
+
+    if hasHookmeta then
+        HookManager.registerNamecall(function(self, method, args)
+            if not antiCaughtActive then return nil end
+            if self == LocalPlayer then
+                if method == "GetAttribute" and blockedAttrs[args[2]] then
+                    return false
+                end
+                if method == "GetAttributeChangedSignal" and blockedAttrs[args[2]] then
+                    return fakeSignal.Event
+                end
+            end
+            return nil
+        end)
+
+        HookManager.registerIndex(function(self, key)
+            if antiCaughtActive and key == "OnClientEvent" and rawequal(self, R_Caught) then
+                return fakeSignal.Event
+            end
+            return nil
+        end)
+    end
+
+    Diag.attrReset = true
+    for attrName in pairs(blockedAttrs) do
+        LocalPlayer:GetAttributeChangedSignal(attrName):Connect(function()
+            if antiCaughtActive and LocalPlayer:GetAttribute(attrName) == true then
+                LocalPlayer:SetAttribute(attrName, false)
+                log(2, "属性重置:", attrName, "-> false")
+            end
+        end)
+    end
+
+    task.spawn(function()
+        while antiCaughtActive do
+            for attrName in pairs(blockedAttrs) do
+                if LocalPlayer:GetAttribute(attrName) == true then
+                    LocalPlayer:SetAttribute(attrName, false)
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+
+    if hasGetconns then
+        Diag.connDisable = true
+        Diag.getconns = true
+        local function disableCaughtConns()
+            for _, conn in ipairs(getconnections(R_Caught.OnClientEvent)) do
+                if conn.Enabled then
+                    pcall(function() conn:Disable() end)
+                end
+            end
+        end
+        disableCaughtConns()
+
+        task.spawn(function()
+            while antiCaughtActive do
+                disableCaughtConns()
+                task.wait(2)
+            end
+        end)
+
+        for _, remote in ipairs({R_Look, R_View}) do
+            pcall(function()
+                for _, conn in ipairs(getconnections(remote.OnClientEvent)) do
+                    pcall(function() conn:Disable() end)
+                end
+            end)
+        end
+    end
+
+    AntiCaught.tryHookSetView()
+
+    task.spawn(function()
+        while antiCaughtActive do
+            local cam = workspace.CurrentCamera
+            if cam and cam.CameraType == Enum.CameraType.Scriptable then
+                local view = Internal.getCurrentView and Internal.getCurrentView() or nil
+                if view == "CAUGHT" or (LocalPlayer:GetAttribute("TeacherCaughtCameraActive") == true) then
+                    cam.CameraType = Enum.CameraType.Custom
+                    log(2, "相机强制恢复: Scriptable -> Custom")
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+
+    log(1, "反被抓系统已启用 (7层防御)")
+    notify("7层反被抓已激活", "green")
+end
+
+function AntiCaught.disable()
+    antiCaughtActive = false
+    log(1, "反被抓系统已关闭")
+end
+
+function AntiCaught.tryHookSetView()
+    if not antiCaughtActive then return end
+    if not Internals.setView or not hasHookfunc then return end
+    if Diag.setViewHook then return end
+    Diag.setViewHook = true
+    pcall(function()
+        local old
+        old = hookfunction(Internals.setView, function(view, ...)
+            if antiCaughtActive and view == "CAUGHT" then
+                log(2, "setView 拦截: CAUGHT -> 跳过")
+                return
+            end
+            return old(view, ...)
+        end)
+    end)
+    log(1, "setView hook 已安装")
+    notify("setView hook 已安装", "green")
+end
+
+local UpvalueHack = {}
+local upvalueTargets = {}
+local upvalueActive = false
+
+function UpvalueHack.scan()
+    if not hasGetupvalues or not hasGetconns then
+        log(1, "UpvalueHack: 执行器不支持 getupvalues/getconnections")
+        return false
+    end
+    Diag.getupvalues = true
+    Diag.setupvalue = hasSetupvalue
+
+    local found = false
+
+    for _, conn in ipairs(getconnections(RunService.Heartbeat)) do
+        if conn.Function then
+            local ok, ups = pcall(getupvalues, conn.Function)
+            if ok and ups then
+                for i, up in ipairs(ups) do
+                    if type(up) == "function" then
+                        local ok2, ups2 = pcall(getupvalues, up)
+                        if ok2 and ups2 then
+                            for j, up2 in ipairs(ups2) do
+                                if up2 == "CHEAT" or up2 == "FREE" or up2 == "EXAM" then
+                                    upvalueTargets = {
+                                        func = up,
+                                        viewIdx = j,
+                                        indices = {},
+                                    }
+                                    for k, up3 in ipairs(ups2) do
+                                        if type(up3) == "number" then
+                                            upvalueTargets.indices[k] = true
+                                        end
+                                    end
+                                    log(2, string.format("UpvalueHack: 找到状态函数 (view@%d, %d个数值变量)", j, #upvalueTargets.indices))
+                                    found = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    if found then break end
+                end
+            end
+            if found then break end
+        end
+    end
+
+    if not found then
+        for _, conn in ipairs(getconnections(RunService.RenderStepped)) do
+            if conn.Function then
+                local ok, ups = pcall(getupvalues, conn.Function)
+                if ok and ups then
+                    for i, up in ipairs(ups) do
+                        if type(up) == "function" then
+                            local ok2, ups2 = pcall(getupvalues, up)
+                            if ok2 and ups2 then
+                                for j, up2 in ipairs(ups2) do
+                                    if up2 == "CHEAT" or up2 == "FREE" then
+                                        upvalueTargets = { func = up, viewIdx = j, indices = {} }
+                                        for k, up3 in ipairs(ups2) do
+                                            if type(up3) == "number" then
+                                                upvalueTargets.indices[k] = true
+                                            end
+                                        end
+                                        log(2, "UpvalueHack: 在 RenderStepped 中找到状态函数")
+                                        found = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if found then break end
+                    end
+                end
+                if found then break end
+            end
+        end
+    end
+
+    if not Internals.setView then
+        for _, conn in ipairs(getconnections(R_Caught.OnClientEvent)) do
+            if conn.Function then
+                local ok, ups = pcall(getupvalues, conn.Function)
+                if ok and ups then
+                    for i, up in ipairs(ups) do
+                        if type(up) == "function" then
+                            local ok2, ups2 = pcall(getupvalues, up)
+                            if ok2 and ups2 then
+                                for j, up2 in ipairs(ups2) do
+                                    if up2 == "FREE" or up2 == "CAUGHT" then
+                                        Internals.setView = up
+                                        log(2, "UpvalueHack: 找到 setView")
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if found then
+        Diag.upvalueHack = true
+        log(1, "UpvalueHack: 扫描完成,已找到目标函数")
+    else
+        log(1, "UpvalueHack: 未找到目标函数 (降级模式)")
+    end
+
+    return found
+end
+
+function UpvalueHack.enable()
+    if upvalueActive then return end
+    if not hasSetupvalue then return end
+    upvalueActive = true
+
+    task.spawn(function()
+        while upvalueActive do
+            if upvalueTargets.func then
+                local ok, ups = pcall(getupvalues, upvalueTargets.func)
+                if ok and ups then
+                    for idx in pairs(upvalueTargets.indices) do
+                        if type(ups[idx]) == "number" and ups[idx] ~= 0 then
+                            pcall(setupvalue, upvalueTargets.func, idx, 0)
+                        end
+                    end
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+
+    log(1, "UpvalueHack 已启用")
+end
+
+function UpvalueHack.disable()
+    upvalueActive = false
+    log(1, "UpvalueHack 已关闭")
+end
+
+Internals = { found = false }
+
+local function discoverInternals()
+    Internals.found = false
+    if not hasGetconns or not hasGetupvalues then
+        log(1, "执行器不支持 getconnections/getupvalues — 降级模式")
+        return false
+    end
+
+    for _, conn in ipairs(getconnections(R_Caught.OnClientEvent)) do
+        if conn.Function then
+            local ok, ups = pcall(getupvalues, conn.Function)
+            if ok and ups and type(ups[2]) == "function" then
+                Internals.setView = ups[2]
+                log(2, "找到 setView")
+                break
+            end
+        end
+    end
+
+    for _, conn in ipairs(getconnections(R_Item.OnClientEvent)) do
+        if conn.Function then
+            local ok, ups = pcall(getupvalues, conn.Function)
+            if ok and ups and type(ups[1]) == "table" then
+                if type(ups[1].completePhoneSearch) == "function" then
+                    Internals.phoneApi = ups[1]
+                    log(2, "找到 phoneApi")
+                    break
+                end
+            end
+        end
+    end
+
+    local function scanButtons(parent)
+        if not parent then return false end
+        for _, gui in ipairs(parent:GetDescendants()) do
+            if gui:IsA("GuiButton") and (gui.Name == "A" or gui.Name == "B" or gui.Name == "C" or gui.Name == "D") then
+                for _, conn in ipairs(getconnections(gui.Activated)) do
+                    if conn.Function then
+                        local ok, ups = pcall(getupvalues, conn.Function)
+                        if ok and ups and type(ups[1]) == "function" then
+                            Internals.submitExamChoice = ups[1]
+                            log(2, "找到 submitExamChoice (按钮:", gui.Name, ")")
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end
+    scanButtons(PlayerGui)
+    if not Internals.submitExamChoice then
+        for _, cls in ipairs(workspace:GetChildren()) do
+            if scanButtons(cls) then break end
+        end
+    end
+
+    if Config.UpvalueHack then
+        UpvalueHack.scan()
+    end
+
+    if Internals.setView and Internals.submitExamChoice then
+        Internals.found = true
+        log(1, "内部函数发现完成 — 全功能就绪")
+    elseif Internals.phoneApi then
+        Internals.found = true
+        log(1, "部分内部函数发现 — 降级模式")
+    else
+        log(1, "未找到内部函数 — 仅 remote hook + 定时器注入模式")
+    end
+    return Internals.found
+end
+
+Internal = {}
+
+function Internal.getCurrentView()
+    if Internals.submitExamChoice then
+        local ok, ups = pcall(getupvalues, Internals.submitExamChoice)
+        if ok and ups then return ups[3] end
+    end
+    if LocalPlayer:GetAttribute("TeacherCaughtCameraActive") == true then return "CAUGHT" end
+    return nil
+end
+
+function Internal.hasAnswer()
+    if not Internals.submitExamChoice then return false end
+    local ok, ups = pcall(getupvalues, Internals.submitExamChoice)
+    return ok and ups and ups[4] == true or false
+end
+
+function Internal.getCorrectAnswer()
+    if not Internals.submitExamChoice then return nil end
+    local ok, ups = pcall(getupvalues, Internals.submitExamChoice)
+    return ok and ups and ups[5] or nil
+end
+
+function Internal.getAnswersWritten()
+    if not Internals.submitExamChoice then return 0 end
+    local ok, ups = pcall(getupvalues, Internals.submitExamChoice)
+    return ok and ups and ups[11] or 0
+end
+
+function Internal.getSearchProgress()
+    if not Internals.submitExamChoice then return 0 end
+    local ok, ups = pcall(getupvalues, Internals.submitExamChoice)
+    return ok and ups and ups[13] or 0
+end
+
+function Internal.getGoalAnswers()
+    local attr = LocalPlayer:GetAttribute("ClassroomGoalAnswers")
+    if type(attr) == "number" then return math.clamp(math.floor(attr + 0.5), 1, 50) end
+    return 10
+end
+
+function Internal.isInRound()
+    if LocalPlayer:GetAttribute("ClassroomInRound") ~= true then return false end
+    local active = LocalPlayer:GetAttribute("ClassroomRoundActive")
+    if type(active) == "boolean" then return active end
+    local endsAt = LocalPlayer:GetAttribute("ClassroomRoundEndsAt")
+    if type(endsAt) ~= "number" then endsAt = workspace:GetAttribute("ClassroomRoundEndsAt") end
+    if type(endsAt) == "number" then return math.max(0, endsAt - workspace:GetServerTimeNow()) > 0 end
+    return false
+end
+
+function Internal.getAnswerFromGUI()
+    local function scan(parent)
+        if not parent then return nil end
+        for _, lbl in ipairs(parent:GetDescendants()) do
+            if lbl:IsA("TextLabel") then
+                local ans = lbl.Text:match("ANSWER:%s*([ABCD])")
+                if ans then return ans end
+            end
+        end
+        return nil
+    end
+    local ans = scan(PlayerGui)
+    if ans then return ans end
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("SurfaceGui") then
+            ans = scan(obj)
+            if ans then return ans end
+        end
+    end
+    return nil
+end
+
+local Search = {}
+
+function Search.instant()
+    if Internals.phoneApi and Internals.phoneApi.completePhoneSearch then
+        local ok, err = pcall(Internals.phoneApi.completePhoneSearch)
+        if ok then
+            local ans = Internal.getCorrectAnswer() or Internal.getAnswerFromGUI()
+            log(1, "瞬间搜题完成! 答案:", ans or "?")
+            notify("搜题完成: " .. (ans or "?"), "green")
+            return ans
+        end
+        log(1, "瞬间搜题失败:", err)
+    elseif Internals.submitExamChoice and hasSetupvalue then
+        local answers = {"A", "B", "C", "D"}
+        local ans = answers[math.random(1, #answers)]
+        pcall(setupvalue, Internals.submitExamChoice, 4, true)
+        pcall(setupvalue, Internals.submitExamChoice, 5, ans)
+        pcall(setupvalue, Internals.submitExamChoice, 13, 100)
+        log(1, "瞬间搜题(降级) 答案:", ans)
+        return ans
+    end
+    log(1, "无法执行瞬间搜题")
+    notify("搜题失败", "red")
+    return nil
+end
+
+local Answer = {}
+
+function Answer.submit(answer)
+    answer = answer or Internal.getCorrectAnswer() or Internal.getAnswerFromGUI()
+    if not answer then
+        log(1, "自动答题: 未找到答案")
+        return false
+    end
+    if Internals.submitExamChoice then
+        local currentView = Internal.getCurrentView()
+        if currentView ~= "EXAM" and hasSetupvalue then
+            pcall(setupvalue, Internals.submitExamChoice, 3, "EXAM")
+        end
+        local ok, err = pcall(Internals.submitExamChoice, answer)
+        if ok then
+            log(1, "已提交答案:", answer)
+            notify("已答题: " .. answer, "green")
+            if currentView and currentView ~= "EXAM" and hasSetupvalue then
+                task.wait(0.1)
+                pcall(setupvalue, Internals.submitExamChoice, 3, currentView)
+            end
+            return true
+        end
+        log(1, "答题失败:", err)
+    end
+    return false
+end
+
+local AdSkip = {}
+local adConn
+
+function AdSkip.enable()
+    if adConn then adConn:Disconnect() end
+    adConn = R_Ad.OnClientEvent:Connect(function(action, slotId)
+        if action == "Granted" then
+            task.wait(0.1)
+            pcall(function() R_Ad:FireServer("Release", slotId) end)
+            if Internals.phoneApi and Internals.phoneApi.stopPhoneAd then
+                pcall(Internals.phoneApi.stopPhoneAd)
+            end
+            log(1, "已跳过广告")
+        end
+    end)
+end
+
+function AdSkip.disable()
+    if adConn then adConn:Disconnect() adConn = nil end
+end
+
+local AutoEngine = {}
+local autoRunning = false
+local autoCycles = 0
+
+function AutoEngine.start()
+    if autoRunning then return end
+    autoRunning = true
+    Config.FullAuto = true
+    task.spawn(function()
+        log(1, "全自动引擎启动")
+        notify("全自动已启动", "accent")
+        while autoRunning do
+            if not Internal.isInRound() then task.wait(1) continue end
+            local written = Internal.getAnswersWritten()
+            local goal = Internal.getGoalAnswers()
+            if written >= goal then task.wait(2) continue end
+            local ans = Search.instant()
+            if not ans then task.wait(1) continue end
+            task.wait(Config.AutoDelay)
+            Answer.submit(ans)
+            autoCycles = autoCycles + 1
+            task.wait(Config.AutoDelay)
+        end
+        log(1, "全自动引擎停止 (共执行", autoCycles, "次)")
+    end)
+end
+
+function AutoEngine.stop()
+    autoRunning = false
+    Config.FullAuto = false
+    notify("全自动已停止", "yellow")
+end
+
+function AutoEngine.singleCycle()
+    task.spawn(function()
+        if not Internal.isInRound() then log(1, "不在回合中") return end
+        local ans = Search.instant()
+        task.wait(0.2)
+        if ans then Answer.submit(ans) end
+        autoCycles = autoCycles + 1
+    end)
+end
+
+-- ============= 4. 创建 WindUI 窗口 =============
+local Window = WindUI:CreateWindow({
+    Title = gradient("CheatHub Classroom", Color3.fromHex("#00DBDE"), Color3.fromHex("#FC00FF")),
+    Author = gradient("v4.3 NEON", Color3.fromHex("#00FF87"), Color3.fromHex("#60EFFF")),
+    IconThemed = true,
+    Folder = "CheatHub",
+    Size = UDim2.fromOffset(450, 400),
+    Transparent = false,
+    Theme = "Dark",
+    Resizable = true,
+    SideBarWidth = 160,
+    HideSearchBar = true,
+    ScrollBarEnabled = true,
+})
+
+Window:EditOpenButton({
+    Title = "[CLASSROOM]",
+    CornerRadius = UDim.new(0,8),
+    StrokeThickness = 4,
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromHex("1E3A8A")),
+        ColorSequenceKeypoint.new(0.5, Color3.fromHex("118AB2")),
+        ColorSequenceKeypoint.new(1, Color3.fromHex("06D6A0"))
+    }),
+    Draggable = true,
+})
+
+Window:Tag({
+    Title = "反检测版",
+    Radius = 5,
+    Color = Color3.fromHex("#FFB347"),
+})
+
+-- Tabs
+local MainTab = Window:Tab({ Title = "总览", Icon = "home" })
+local ShieldTab = Window:Tab({ Title = "防护", Icon = "shield" })
+local CheatTab = Window:Tab({ Title = "作弊", Icon = "wand" })
+local AutoTab = Window:Tab({ Title = "自动", Icon = "play" })
+local DiagTab = Window:Tab({ Title = "诊断", Icon = "activity" })
+
+-- 快捷状态 Label（可在总览实时更新）
+local statusLabel = MainTab:Label("等待初始化...")
+
+-- ============= 5. 绑定控件与功能 =============
+
+-- 总览 Tab
+MainTab:Paragraph({
+    Title = "实时状态",
+    Desc = "视角 / 答题进度 / 搜索进度 等"
+})
+MainTab:Button("⚡ 单次搜题+答题", function()
+    AutoEngine.singleCycle()
+end)
+MainTab:Button("▶ 启动全自动", function()
+    if autoRunning then AutoEngine.stop() else AutoEngine.start() end
+end)
+
+-- 防护 Tab
+ShieldTab:Toggle("反被抓系统 (7层防御)", Config.AntiCaught, function(val)
+    Config.AntiCaught = val
+    if val then AntiCaught.enable() else AntiCaught.disable() end
+end)
+ShieldTab:Toggle("StateUpdate 拦截 (BLOCK模式)", Config.SpoofState, function(val)
+    Config.SpoofState = val
+    Config.BlockSearching = val
+end)
+ShieldTab:Toggle("ProgressUpdate 篡改", Config.SpoofProgress, function(val)
+    Config.SpoofProgress = val
+end)
+ShieldTab:Toggle("视角伪装 (CHEAT→FREE)", Config.SpoofView, function(val)
+    Config.SpoofView = val
+    if val then notify("警告: 视角伪装可能影响答题界面", "yellow") end
+end)
+ShieldTab:Toggle("定时器注入", Config.CleanInject, function(val)
+    Config.CleanInject = val
+    if val then CleanInjector.enable() else CleanInjector.disable() end
+end)
+ShieldTab:Toggle("Upvalue 操控", Config.UpvalueHack, function(val)
+    Config.UpvalueHack = val
+    if val then UpvalueHack.enable() else UpvalueHack.disable() end
+end)
+ShieldTab:Toggle("自动跳广告", Config.AutoAdSkip, function(val)
+    Config.AutoAdSkip = val
+    if val then AdSkip.enable() else AdSkip.disable() end
+end)
+
+-- 作弊 Tab
+CheatTab:Toggle("瞬间搜题", Config.InstantSearch, function(val) Config.InstantSearch = val end)
+CheatTab:Toggle("自动答题", Config.AutoAnswer, function(val) Config.AutoAnswer = val end)
+CheatTab:Button("🔍 仅搜题", function() Search.instant() end)
+CheatTab:Button("✅ 仅答题", function() Answer.submit() end)
+CheatTab:Label("视角切换 (FREE / CHEAT / EXAM)")
+CheatTab:Button("设为 FREE", function()
+    if Internals.setView then pcall(Internals.setView, "FREE") end
+end)
+CheatTab:Button("设为 CHEAT", function()
+    if Internals.setView then pcall(Internals.setView, "CHEAT") end
+end)
+CheatTab:Button("设为 EXAM", function()
+    if Internals.setView then pcall(Internals.setView, "EXAM") end
+end)
+
+-- 自动 Tab
+AutoTab:Toggle("全自动模式", Config.FullAuto, function(val)
+    Config.FullAuto = val
+    if val then AutoEngine.start() else AutoEngine.stop() end
+end)
+AutoTab:Slider("循环间隔(秒)", 0.1, 5, Config.AutoDelay, 0.1, function(val)
+    Config.AutoDelay = val
+end)
+AutoTab:Slider("注入间隔(秒)", 0.05, 1, Config.InjectInterval, 0.01, function(val)
+    Config.InjectInterval = val
+end)
+AutoTab:Button("🔄 重新发现内部函数", function()
+    discoverInternals()
+    if Config.UpvalueHack then UpvalueHack.scan() end
+    if Config.AntiCaught then AntiCaught.tryHookSetView() end
+    notify("重新扫描完成", "accent")
+end)
+
+-- 诊断 Tab
+DiagTab:Button("运行诊断", function()
+    log(1, "=== 诊断报告 ===")
+    log(1, "hookmetamethod:", Diag.hookmeta and "OK" or "FAIL")
+    log(1, "hookfunction:", Diag.hookfunc and "OK" or "FAIL")
+    log(1, "getconnections:", Diag.getconns and "OK" or "FAIL")
+    log(1, "getupvalues:", Diag.getupvalues and "OK" or "FAIL")
+    log(1, "namecallBlock:", Diag.namecallBlock and "OK" or "FAIL")
+    log(1, "cleanInject:", Diag.cleanInject and "OK" or "FAIL")
+    log(1, "upvalueHack:", Diag.upvalueHack and "OK" or "FAIL")
+    log(1, "attrReset:", Diag.attrReset and "OK" or "FAIL")
+    log(1, "connDisable:", Diag.connDisable and "OK" or "FAIL")
+    log(1, "setViewHook:", Diag.setViewHook and "OK" or "FAIL")
+    notify("诊断已输出到控制台", "accent")
+end)
+DiagTab:Paragraph({
+    Title = "执行器能力",
+    Desc = string.format(
+        "hookmetamethod: %s\nhookfunction: %s\ngetconnections: %s\ngetupvalues: %s\nsetupvalue: %s",
+        hasHookmeta and "✓" or "✗",
+        hasHookfunc and "✓" or "✗",
+        hasGetconns and "✓" or "✗",
+        hasGetupvalues and "✓" or "✗",
+        hasSetupvalue and "✓" or "✗"
+    )
+})
+
+-- ============= 6. 快捷键 & 后台刷新 =============
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        Window:Toggle() -- WindUI 可能提供的显隐方法，若无效可自定义
+    elseif input.KeyCode == Enum.KeyCode.F8 then
+        AutoEngine.singleCycle()
+    elseif input.KeyCode == Enum.KeyCode.F9 then
+        if autoRunning then AutoEngine.stop() else AutoEngine.start() end
+    end
+end)
+
+-- 定时更新状态标签（WindUI Label 可更新文本）
+task.spawn(function()
+    while true do
+        local view = Internal.getCurrentView() or "?"
+        local written = Internal.getAnswersWritten()
+        local goal = Internal.getGoalAnswers()
+        local inRound = Internal.isInRound()
+        local stats = RemoteGuard.getStats()
+        local ci = CleanInjector.getStats()
+        local ans = Internal.getCorrectAnswer() or Internal.getAnswerFromGUI() or "?"
+        statusLabel:Set(string.format(
+            "回合:%s | 视角:%s | 已答:%d/%d | 答案:%s | 注入:%d | 循环:%d",
+            inRound and "是" or "否",
+            view, written, goal, ans,
+            ci.count, autoCycles
+        ))
+        task.wait(0.5)
+    end
+end)
+
+-- ============= 7. 初始化 =============
+local function init()
+    log(1, "══════════════════════════════")
+    log(1, "  CheatHub Classroom v4.3 NEON (WindUI)")
+    log(1, "══════════════════════════════")
+
+    task.wait(1)
+    discoverInternals()
+
+    if Config.SpoofState or Config.SpoofProgress or Config.SpoofView then
+        RemoteGuard.enable()
+    end
+    if Config.AntiCaught then AntiCaught.enable() end
+    if Config.CleanInject then CleanInjector.enable() end
+    if Config.UpvalueHack and hasSetupvalue then UpvalueHack.enable() end
+    if Config.AutoAdSkip then AdSkip.enable() end
+
+    log(1, "初始化完成，右键 Shift 显隐窗口，F8 单次搜答，F9 全自动")
+    notify("CheatHub WindUI 已启动", "accent")
+end
+
+local ok, err = pcall(init)
+if not ok then
+    warn("[CheatHub] 初始化失败:", err)
+end
+
+-- 全局导出
+_G.CheatHub = {
+    Config = Config, Internals = Internals, Internal = Internal,
+    Search = Search, Answer = Answer, AutoEngine = AutoEngine,
+    AntiCaught = AntiCaught, RemoteGuard = RemoteGuard, AdSkip = AdSkip,
+    CleanInjector = CleanInjector, UpvalueHack = UpvalueHack,
+    Diag = Diag, discoverInternals = discoverInternals,
+}
