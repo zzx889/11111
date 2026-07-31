@@ -1645,13 +1645,7 @@ function createUI()
             loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/359e97f8618e9008afe5f496184ebb7c.lua"))()
         end
     })
-    GameTab:Button({
-        Title = "忍者传奇",
-        Callback = function()
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/zzx889/88888/refs/heads/main/%E5%A6%A5%E5%8D%8F%E8%84%9A%E6%9C%AC.txt"))()
-        end
-    })
-
+    
     -- 脚本中心
     local ScriptCenterTab = Window:Tab({ Title = "脚本中心", Icon = "file-text" })
     ScriptCenterTab:Paragraph({
@@ -2033,7 +2027,184 @@ function createUI()
             end
         end
     end)
+-- 忍者传奇独立分区
+local NinjaTab = Window:Tab({ Title = "忍者传奇", Icon = "sword" })
+local ranks = {"Student", "Genin", "Chunin", "Jonin", "Anbu", "Kage", "Legendary", "Mythical", "Eternal", "Divine"}
 
+NinjaTab:Toggle({
+    Title = "自动挥舞", Default = false,
+    Callback = function(enabled)
+        getgenv().autoswing = enabled
+        if enabled then
+            task.spawn(function()
+                while getgenv().autoswing do
+                    pcall(function()
+                        local player = Players.LocalPlayer
+                        if not player then return end
+                        for _, tool in pairs(player.Backpack:GetChildren()) do
+                            if tool:FindFirstChild("ninjitsuGain") then
+                                local char = player.Character
+                                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                                if hum and hum.Parent then hum:EquipTool(tool) end
+                                break
+                            end
+                        end
+                        local ninjaEvent = player:FindFirstChild("ninjaEvent")
+                        if ninjaEvent then ninjaEvent:FireServer("swingKatana") end
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        else
+            getgenv().autoswing = false
+        end
+    end
+})
+
+NinjaTab:Toggle({
+    Title = "自动售卖", Default = false,
+    Callback = function(enabled)
+        getgenv().autosell = enabled
+        if enabled then
+            task.spawn(function()
+                while getgenv().autosell do
+                    pcall(function()
+                        local sellPart = Workspace.sellAreaCircles.sellAreaCircle16.circleInner
+                        local root = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        if sellPart and root then
+                            sellPart.CFrame = root.CFrame
+                            task.wait(0.1)
+                            sellPart.CFrame = CFrame.new(0, 0, 0)
+                            task.wait(0.1)
+                        end
+                    end)
+                    task.wait()
+                end
+            end)
+        end
+    end
+})
+
+NinjaTab:Toggle({
+    Title = "自动购买排名", Default = false,
+    Callback = function(enabled)
+        getgenv().autobuyranks = enabled
+        if enabled then
+            task.spawn(function()
+                while getgenv().autobuyranks do
+                    pcall(function()
+                        for _, rank in ipairs(ranks) do
+                            Players.LocalPlayer.ninjaEvent:FireServer("buyRank", rank)
+                        end
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+NinjaTab:Toggle({
+    Title = "自动购买腰带", Default = false,
+    Callback = function(enabled)
+        getgenv().autobuybelts = enabled
+        if enabled then
+            task.spawn(function()
+                while getgenv().autobuybelts do
+                    pcall(function()
+                        Players.LocalPlayer.ninjaEvent:FireServer("buyAllBelts", "Inner Peace Island")
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+NinjaTab:Toggle({
+    Title = "自动购买技能", Default = false,
+    Callback = function(enabled)
+        getgenv().autobuyskills = enabled
+        if enabled then
+            task.spawn(function()
+                while getgenv().autobuyskills do
+                    pcall(function()
+                        Players.LocalPlayer.ninjaEvent:FireServer("buyAllSkills", "Inner Peace Island")
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+NinjaTab:Toggle({
+    Title = "自动购买剑", Default = false,
+    Callback = function(enabled)
+        getgenv().autobuy = enabled
+        if enabled then
+            task.spawn(function()
+                while getgenv().autobuy do
+                    pcall(function()
+                        Players.LocalPlayer.ninjaEvent:FireServer("buyAllSwords", "Inner Peace Island")
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+NinjaTab:Button({
+    Title = "解锁所有岛",
+    Callback = function()
+        for _, islandPart in ipairs(Workspace.islandUnlockParts:GetChildren()) do
+            if islandPart and islandPart:FindFirstChild("islandSignPart") then
+                local root = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    root.CFrame = islandPart.islandSignPart.CFrame
+                    task.wait(0.5)
+                end
+            end
+        end
+    end
+})
+
+NinjaTab:Paragraph({ Title = "传送功能", Desc = "" })
+local teleportList = {
+    {"出生点", CFrame.new(25.67, 3.42, 29.92)},
+    {"附魔岛", CFrame.new(51.17, 766.18, -138.45)},
+    {"神秘岛", CFrame.new(171.97, 4047.38, 42.07)},
+    {"太空岛", CFrame.new(148.84, 5657.19, 73.50)},
+    {"冻土岛", CFrame.new(139.28, 9285.18, 77.36)},
+    {"永恒岛", CFrame.new(149.35, 13680.04, 73.39)},
+    {"沙暴岛", CFrame.new(133.37, 17686.33, 72.00)},
+    {"雷暴岛", CFrame.new(143.19, 24070.02, 78.05)},
+    {"远古炼狱岛", CFrame.new(141.27, 28256.29, 69.38)},
+    {"午夜暗影岛", CFrame.new(132.74, 33206.98, 57.50)},
+    {"神秘灵魂岛", CFrame.new(137.76, 39317.57, 61.07)},
+    {"冬季奇迹岛", CFrame.new(137.27, 46010.55, 55.94)},
+    {"黄金大师岛", CFrame.new(128.32, 52607.77, 56.69)},
+    {"龙传奇岛", CFrame.new(146.35, 59594.68, 77.53)},
+    {"赛博传奇岛", CFrame.new(137.33, 66669.16, 72.22)},
+    {"天岚超能岛", CFrame.new(135.48, 70271.16, 57.02)},
+    {"混沌传奇岛", CFrame.new(148.59, 74442.85, 69.32)},
+    {"灵魂融合岛", CFrame.new(136.97, 79746.98, 58.54)},
+    {"黑暗元素岛", CFrame.new(141.70, 83198.98, 72.73)},
+    {"内心和平岛", CFrame.new(135.32, 87051.06, 66.78)},
+    {"炽烈漩涡岛", CFrame.new(135.08, 91246.07, 69.57)},
+    {"35倍金币区域", CFrame.new(86.29, 91245.77, 120.54)},
+    {"死亡宠物", CFrame.new(4593.21, 130.87, 1430.22)},
+}
+for _, data in ipairs(teleportList) do
+    NinjaTab:Button({
+        Title = "传送到" .. data[1],
+        Callback = function()
+            local root = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if root then root.CFrame = data[2] end
+        end
+    })
+end
     -- ==================== 流光彩虹边框 ====================
     task.wait(0.3)
     local Main = Window.UIElements and Window.UIElements.Main or nil
