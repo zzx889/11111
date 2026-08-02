@@ -443,7 +443,7 @@ function createUI()
         Title = gradient("妥协", Color3.fromHex("#00DBDE"), Color3.fromHex("#FC00FF")),
         Icon = "paint-bucket",
         IconThemed = true,
-        Author = gradient("妥协", Color3.fromHex("#00FF87"), Color3.fromHex("#60EFFF")),
+        Author = gradient("TXnbsy", Color3.fromHex("#00FF87"), Color3.fromHex("#60EFFF")),
         Folder = "妥协hub",
         Size = UDim2.fromOffset(680, 460),
         MinSize = Vector2.new(560, 350),
@@ -1645,6 +1645,281 @@ function createUI()
             loadstring(game:HttpGet("https://api.luarmor.net/files/v4/loaders/359e97f8618e9008afe5f496184ebb7c.lua"))()
         end
     })
+_G.WindUI_AutoStates = _G.WindUI_AutoStates or {
+    AutoKillReport = false, AutoKillReport2 = false, AutoKillReport3 = false,
+    AutoKill = false, killall = false
+}
+Interstellar = Interstellar or {}
+
+GameTab:Section({ Title = "力量传奇", Opened = true })
+
+-- 比赛
+GameTab:Toggle({ Title = "自动比赛开关", Default = false, Callback = function(state)
+    getgenv().AutoBrawl = state
+    while getgenv().AutoBrawl do task.wait(2) game:GetService("ReplicatedStorage").rEvents.brawlEvent:FireServer("joinBrawl") task.wait() end
+end })
+
+-- 防打训练
+GameTab:Paragraph({ Title = "防打自动锻炼", Desc = "死亡后不会继续，建议搭配安全点循环传送" })
+GameTab:Toggle({ Title = "自动锻炼全部", Default = false, Callback = function(state)
+    getgenv().AutoTrainTriple = state
+    local oldPos = LocalPlayer.Character.HumanoidRootPart.CFrame
+    local part = Instance.new('Part', Workspace)
+    part.Size = Vector3.new(500, 20, 530.1); part.Position = Vector3.new(0, 100000, 133.15)
+    part.Anchored = true; part.CanCollide = true
+    while getgenv().AutoTrainTriple do task.wait()
+        local char = LocalPlayer.Character
+        if char then
+            char.HumanoidRootPart.CFrame = part.CFrame + Vector3.new(0, 50, 0)
+            for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+                if v:IsA("Tool") and table.find({"Weight","Pushups","Situps","Handstands"}, v.Name) then
+                    if v:FindFirstChildOfClass("NumberValue") then v:FindFirstChildOfClass("NumberValue").Value = 0 end
+                    repeat task.wait() until LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
+                    char.Humanoid:EquipTool(v)
+                    LocalPlayer.muscleEvent:FireServer("rep")
+                end
+            end
+        else task.wait(1) end
+    end
+    part:Destroy()
+    if char then char.HumanoidRootPart.CFrame = oldPos; char.Humanoid:UnequipTools() end
+end })
+
+local defTrain = {
+    {var = "AutoWeight", name = "Weight", cn = "举哑铃"},
+    {var = "AutoPushup", name = "Pushups", cn = "俯卧撑"},
+    {var = "AutoSitup", name = "Situps", cn = "仰卧起坐"},
+    {var = "AutoHandstand", name = "Handstands", cn = "倒立"}
+}
+for _, info in ipairs(defTrain) do
+    GameTab:Toggle({ Title = "自动"..info.cn, Default = false, Callback = function(state)
+        getgenv()[info.var] = state
+        local oldPos = LocalPlayer.Character.HumanoidRootPart.CFrame
+        local part = Instance.new('Part', Workspace)
+        part.Size = Vector3.new(500, 20, 530.1); part.Position = Vector3.new(0, 100000, 133.15)
+        part.Anchored = true; part.CanCollide = true
+        while getgenv()[info.var] do task.wait()
+            local char = LocalPlayer.Character
+            if char then
+                char.HumanoidRootPart.CFrame = part.CFrame + Vector3.new(0, 50, 0)
+                for _, item in pairs(LocalPlayer.Backpack:GetChildren()) do
+                    if item:IsA("Tool") and item.Name == info.name then item.Parent = char end
+                end
+                LocalPlayer.muscleEvent:FireServer("rep")
+            else task.wait(1) end
+        end
+        part:Destroy()
+        if char then char.HumanoidRootPart.CFrame = oldPos; char.Humanoid:UnequipTools() end
+    end })
+end
+
+-- 可移动训练
+GameTab:Toggle({ Title = "自动锻炼全部(不防打)", Default = false, Callback = function(state)
+    getgenv().AutoAllTrain = state
+    task.spawn(function()
+        while getgenv().AutoAllTrain do
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char then
+                    for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+                        if v:IsA("Tool") and table.find({"Weight","Pushups","Situps","Handstands"}, v.Name) then
+                            v.Parent = char; LocalPlayer.muscleEvent:FireServer("rep"); task.wait(0.02)
+                            v.Parent = LocalPlayer.Backpack; task.wait(0.2)
+                        end
+                    end
+                else task.wait(2) end
+            end)
+            task.wait()
+        end
+    end)
+end })
+
+for _, info in ipairs(defTrain) do
+    GameTab:Toggle({ Title = "自动"..info.cn.."(不防打)", Default = false, Callback = function(state)
+        getgenv()[info.var] = state
+        task.spawn(function()
+            while getgenv()[info.var] do
+                pcall(function()
+                    local char = LocalPlayer.Character
+                    if char then
+                        for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+                            if v:IsA("Tool") and v.Name == info.name then
+                                v.Parent = char; LocalPlayer.muscleEvent:FireServer("rep"); task.wait(0.03)
+                                v.Parent = LocalPlayer.Backpack; task.wait(0.2)
+                            end
+                        end
+                    else task.wait(2) end
+                end)
+                task.wait()
+            end
+        end)
+    end })
+end
+
+-- 打石头
+GameTab:Paragraph({ Title = "石头对照表", Desc = "Tiny Rock=10耐力\nInferno Rock=100\nPunching Rock=5000\nRock Of Legends=150000\nMuscle King Mountain=400000\nAncient Jungle Rock=750000" })
+local rocks = {"Tiny Rock", "Inferno Rock", "Punching Rock", "Rock Of Legends", "Muscle King Mountain", "Ancient Jungle Rock"}
+GameTab:Dropdown({ Title = "选择石头", Values = rocks, Value = "空", Callback = function(v) Interstellar.Rocks = v; Interstellar.Rock = v end })
+
+GameTab:Toggle({ Title = "自动打石头v1(传送)", Default = false, Callback = function(state)
+    getgenv().rockV1 = state
+    task.spawn(function()
+        local oldCFrame = nil
+        while getgenv().rockV1 do task.wait()
+            pcall(function()
+                local char = LocalPlayer.Character; if not char then return end
+                local rock = Workspace.machinesFolder[Interstellar.Rocks].Rock
+                if not oldCFrame then oldCFrame = rock.CFrame end
+                char.Humanoid:EquipTool(char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch"))
+                if char:FindFirstChild("Punch") then char.Punch:Activate() end
+                rock.CFrame = char.HumanoidRootPart.CFrame * CFrame.new(0,0,-3)
+                rock.CanCollide = false; rock.Transparency = 1
+                rock.rockGui.rockName.Visible = false; rock.rockGui.statLabel.Visible = false
+            end)
+        end
+        if oldCFrame then pcall(function()
+            local rock = Workspace.machinesFolder[Interstellar.Rocks].Rock
+            rock.CFrame = oldCFrame; rock.CanCollide = true; rock.Transparency = 0
+            rock.rockGui.rockName.Visible = true; rock.rockGui.statLabel.Visible = true
+        end) end
+    end)
+end })
+
+GameTab:Toggle({ Title = "自动打石头v2(隔空)", Default = false, Callback = function(state)
+    getgenv().rockV2 = state
+    task.spawn(function()
+        while getgenv().rockV2 do task.wait()
+            pcall(function()
+                local char = LocalPlayer.Character; if not char then return end
+                char.Humanoid:EquipTool(char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch"))
+                if char:FindFirstChild("Punch") then char.Punch:Activate() end
+                firetouchinterest(Workspace.machinesFolder[Interstellar.Rock].Rock, char.LeftHand, 0)
+                firetouchinterest(Workspace.machinesFolder[Interstellar.Rock].Rock, char.LeftHand, 1)
+            end)
+        end
+    end)
+end })
+
+-- 跑步机
+GameTab:Paragraph({ Title = "跑步机", Desc = "点击开关后自动传送并跑步" })
+local treadmillCF = {
+    ["沙滩跑步机"] = CFrame.new(238.671, 5.403, 387.713),
+    ["冰霜健身房跑步机"] = CFrame.new(-3005.379, 14.322, -464.698),
+}
+for name, cf in pairs(treadmillCF) do
+    GameTab:Toggle({ Title = name, Default = false, Callback = function(state)
+        getgenv()[name] = state
+        while getgenv()[name] do task.wait()
+            local char = LocalPlayer.Character; if not char then continue end
+            char.HumanoidRootPart.CFrame = cf; char:FindFirstChild("Humanoid").WalkSpeed = 10
+            RunService:BindToRenderStep("treadmill", Enum.RenderPriority.Character.Value+1, function()
+                if char and char:FindFirstChild("Humanoid") then char.Humanoid:Move(Vector3.new(10000,0,-1), true) end
+            end)
+        end
+        RunService:UnbindFromRenderStep("treadmill")
+    end })
+end
+
+-- 自动重生
+GameTab:Toggle({ Title = "自动重生", Default = false, Callback = function(state)
+    getgenv().AutoRebirth = state
+    if state then task.spawn(function() while getgenv().AutoRebirth do pcall(function() game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest") end) task.wait() end end) end
+end })
+GameTab:Input({ Title = "指定重生次数", Callback = function(v) Interstellar.birth = tonumber(v) or 0 end })
+GameTab:Toggle({ Title = "自动重生到指定次数", Default = false, Callback = function(state)
+    Interstellar.autobirth = state
+    if state then task.spawn(function() while Interstellar.autobirth and LocalPlayer.leaderstats.Rebirths.Value < Interstellar.birth do pcall(function() game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest") end) task.wait() end; Interstellar.autobirth = false; Notify("重生完成","已到达目标次数",3) end) end
+end })
+
+-- 刷业报
+local AutoStates = _G.WindUI_AutoStates
+GameTab:Toggle({ Title = "自动刷业报v1(随机瞬移)", Default = AutoStates.AutoKillReport, Callback = function(state)
+    AutoStates.AutoKillReport = state
+    if state then task.spawn(function() while AutoStates.AutoKillReport do pcall(function()
+        local char = LocalPlayer.Character; if not char or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then task.wait(); return end
+        local punch = char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch"); if punch then punch.Parent = char; punch:Activate() end
+        local targets = {}; for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then table.insert(targets, pl.Character.HumanoidRootPart) end end
+        if #targets > 0 then local t = targets[math.random(#targets)]; char.HumanoidRootPart.CFrame = t.CFrame * CFrame.new(0,0,2) end
+    end); task.wait() end end) end
+end })
+
+GameTab:Toggle({ Title = "自动刷业报v2(雕像头顶)", Default = AutoStates.AutoKillReport2, Callback = function(state)
+    AutoStates.AutoKillReport2 = state
+    if state then local safePos = CFrame.new(-8751.0,120.4,-5863.1); task.spawn(function() while AutoStates.AutoKillReport2 do pcall(function()
+        local char = LocalPlayer.Character; if not char then task.wait(); return end
+        char.HumanoidRootPart.CFrame = safePos
+        local punch = char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch"); if punch then punch.Parent = char; punch:Activate() end
+        local targets = {}; for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then table.insert(targets, pl.Character.HumanoidRootPart) end end
+        if #targets > 0 then local t = targets[math.random(#targets)]; char.HumanoidRootPart.CFrame = t.CFrame * CFrame.new(0,0,2) end
+    end); task.wait() end end) end
+end })
+
+GameTab:Toggle({ Title = "自动刷业报v3(拉人)", Default = false, Callback = function(state)
+    getgenv().AutoKarmaV3 = state
+    if state then
+        local platform = Instance.new('Part', Workspace); platform.Size = Vector3.new(50,30,50); platform.Position = Vector3.new(0,3000000,0); platform.Anchored = true
+        LocalPlayer.CharacterAdded:Connect(function(c) if getgenv().AutoKarmaV3 then c:WaitForChild("HumanoidRootPart").CFrame = platform.CFrame + Vector3.new(0,25,0) end end)
+        task.spawn(function() while getgenv().AutoKarmaV3 do pcall(function()
+            local char = LocalPlayer.Character; if not char then task.wait(); return end
+            char.HumanoidRootPart.CFrame = platform.CFrame + Vector3.new(0,25,0)
+            local punch = char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch"); if punch then punch.Parent = char; punch:Activate() end
+            for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then pl.Character.HumanoidRootPart.CFrame = char.HumanoidRootPart.CFrame * CFrame.new(0,0,-2) end end
+        end); task.wait() end; if platform then platform:Destroy() end end)
+    end
+end })
+
+GameTab:Toggle({ Title = "自动刷业报v4(远程接触)", Default = AutoStates.AutoKillReport3, Callback = function(state)
+    AutoStates.AutoKillReport3 = state
+    if state then task.spawn(function() while AutoStates.AutoKillReport3 do for _,target in ipairs(Players:GetPlayers()) do if target ~= LocalPlayer and target.Character and target.Character:FindFirstChild("Head") then pcall(function()
+        local char = LocalPlayer.Character; if not char then return end
+        char.Humanoid:EquipTool(char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch")); if char:FindFirstChild("Punch") then char.Punch:Activate() end
+        local head = target.Character.Head; local hand = char:FindFirstChild("LeftHand"); if hand then firetouchinterest(head,hand,0); task.wait(0.01); firetouchinterest(head,hand,1) end
+    end) end end; task.wait(0.1) end end) end
+end })
+
+-- 自定义远程名单（利用已有变量）
+local PlayerList = {}
+local function refreshPlayerList() PlayerList = {}; for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer then table.insert(PlayerList, pl.Name) end end end
+refreshPlayerList()
+Players.PlayerAdded:Connect(function(pl) if pl ~= LocalPlayer then table.insert(PlayerList, pl.Name) end end)
+Players.PlayerRemoving:Connect(function(pl) local idx = table.find(PlayerList, pl.Name); if idx then table.remove(PlayerList, idx) end end)
+
+local killDropdown = GameTab:Dropdown({ Title = "远程击杀名单", Values = PlayerList, Value = {}, Multi = true, AllowNone = true, Callback = function(v) Interstellar.killplayers = v or {} end })
+GameTab:Toggle({ Title = "对选中玩家远程击杀", Default = false, Callback = function(state)
+    AutoStates.AutoKill = state
+    if state then task.spawn(function() while AutoStates.AutoKill do
+        local targets = #Interstellar.killplayers > 0 and Interstellar.killplayers or PlayerList
+        for _,name in ipairs(targets) do local pl = Players:FindFirstChild(name)
+            if pl and pl.Character and pl.Character:FindFirstChild("Head") then pcall(function()
+                local char = LocalPlayer.Character; if not char then return end
+                char.Humanoid:EquipTool(char:FindFirstChild("Punch") or LocalPlayer.Backpack:FindFirstChild("Punch")); if char:FindFirstChild("Punch") then char.Punch:Activate() end
+                local head = pl.Character.Head; local hand = char:FindFirstChild("LeftHand"); if hand then firetouchinterest(head,hand,0); task.wait(0.01); firetouchinterest(head,hand,1) end
+            end) end
+        end; task.wait(0.1)
+    end end) end
+end })
+GameTab:Button({ Title = "刷新玩家列表", Callback = function() refreshPlayerList(); killDropdown:Refresh(PlayerList) end })
+
+-- 宠物蛋
+GameTab:Paragraph({ Title = "宠物蛋", Desc = "选择蛋后开启自动购买" })
+local crystalNames = {"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal","Inferno Crystal","Legends Crystal"}
+local crystalChosen = nil
+GameTab:Dropdown({ Title = "选择宠物蛋", Values = crystalNames, Value = "空", Callback = function(v) crystalChosen = v end })
+GameTab:Toggle({ Title = "自动购买宠物蛋", Default = false, Callback = function(state)
+    getgenv().AutoOpenCrystal = state
+    if state then task.spawn(function() while getgenv().AutoOpenCrystal do pcall(function() game:GetService("ReplicatedStorage").rEvents.openCrystalRemote:InvokeServer("openCrystal",crystalChosen) end) task.wait() end end) end
+end })
+
+-- 收集
+GameTab:Toggle({ Title = "自动吃奶昔", Default = false, Callback = function(state)
+    getgenv().AutoShake = state
+    while getgenv().AutoShake do task.wait()
+        for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do if v:IsA("Tool") and v.Name:find("Shake") then LocalPlayer.Character.Humanoid:EquipTool(v); v:Activate(); break end end
+    end
+end })
+
+-- 解锁通行证
+GameTab:Button({ Title = "解锁全部通行证", Callback = function() pcall(function() for _,v in ipairs(game:GetService("ReplicatedStorage").gamepassIds:GetChildren()) do v.Parent = LocalPlayer.ownedGamepasses end end) end })
     
     -- 脚本中心
     local ScriptCenterTab = Window:Tab({ Title = "脚本中心", Icon = "file-text" })
