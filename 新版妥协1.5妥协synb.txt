@@ -882,6 +882,99 @@ function createUI()
         Title = gradient("📢 妥协 Hub 公告", Color3.fromHex("#FFB347"), Color3.fromHex("#FF6B6B")),
         Desc = "欢迎使用妥协 Hub！本脚本集成了多种实用功能，持续更新中。\n如有问题或建议，欢迎加入交流群：1081045774"
     })
+    -- ==================== 系统状态显示（公告分区内，绿色状态文字） ====================
+local sysPara = NoticeTab:Paragraph({
+    Title = gradient("📊 系统状态", Color3.fromRGB(0, 255, 135), Color3.fromRGB(96, 239, 255)),
+    Desc = '版本: V2.0.0\n运行时间: 00:00:00\n<font color="#00FF00">状态: 运行稳定</font>\n内存: --\nCPU: --%'
+})
+
+local scriptStartTime = tick()
+local frameTimes = {}
+local FRAME_SAMPLE_COUNT = 30
+RunService.Heartbeat:Connect(function()
+    table.insert(frameTimes, tick())
+    if #frameTimes > FRAME_SAMPLE_COUNT then
+        table.remove(frameTimes, 1)
+    end
+end)
+
+task.spawn(function()
+    -- 备用浮动标签（如果段落无法更新，会自动显示在左上角）
+    local fallbackLabel = nil
+    local useFallback = not sysPara
+    if useFallback then
+        local gui = Instance.new("ScreenGui", CoreGui)
+        local lbl = Instance.new("TextLabel", gui)
+        lbl.Size = UDim2.new(0, 300, 0, 130)
+        lbl.Position = UDim2.new(0, 10, 0, 40)
+        lbl.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+        lbl.BackgroundTransparency = 0.2
+        lbl.RichText = true
+        lbl.TextSize = 18
+        lbl.Text = '版本: V2.0.0\n运行时间: 00:00:00\n<font color="#00FF00">状态: 运行稳定</font>\n内存: --\nCPU: --%'
+        fallbackLabel = lbl
+    end
+
+    while true do
+        local elapsed = tick() - scriptStartTime
+        local hours = math.floor(elapsed / 3600)
+        local minutes = math.floor((elapsed % 3600) / 60)
+        local seconds = math.floor(elapsed % 60)
+        local timeStr = string.format("%02d:%02d:%02d", hours, minutes, seconds)
+
+        local memoryStr = "N/A"
+        pcall(function()
+            local stats = game:GetService("Stats")
+            local mem = stats:GetTotalMemoryUsageMb()
+            if mem then
+                memoryStr = string.format("%.1f MB", mem)
+            else
+                memoryStr = string.format("%.1f KB (Lua)", collectgarbage("count"))
+            end
+        end)
+
+        local cpuPercent = 0
+        if #frameTimes >= 2 then
+            local totalTime = frameTimes[#frameTimes] - frameTimes[1]
+            local avgFrameTime = totalTime / (#frameTimes - 1)
+            cpuPercent = math.clamp((avgFrameTime - 1/60) / (1/60) * 100, 0, 100)
+        end
+        local cpuStr = string.format("%.1f%%", cpuPercent)
+
+        local newDesc = string.format(
+            '版本: V2.0.0\n运行时间: %s\n<font color="#00FF00">状态: 运行稳定</font>\n内存: %s\nCPU: %s',
+            timeStr, memoryStr, cpuStr
+        )
+
+        -- 尝试更新段落
+        local updated = false
+        if not useFallback and sysPara then
+            pcall(function()
+                local success1 = pcall(function() sysPara:SetDesc(newDesc) end)
+                if not success1 then
+                    pcall(function()
+                        local frame = sysPara.Instance or sysPara.Container
+                        if frame then
+                            local desc = frame:FindFirstChild("Desc") or frame:FindFirstChild("Content")
+                            if desc and desc:IsA("TextLabel") then
+                                desc.Text = newDesc
+                                updated = true
+                            end
+                        end
+                    end)
+                else
+                    updated = true
+                end
+            end)
+        end
+
+        if not updated and fallbackLabel then
+            fallbackLabel.Text = newDesc
+        end
+
+        task.wait(1)
+    end
+end)
     NoticeTab:Paragraph({
         Title = gradient("✨ V1.5 小更新", Color3.fromHex("#00DBDE"), Color3.fromHex("#FC00FF")),
         Desc = "本次更新新增多项功能：\n"
